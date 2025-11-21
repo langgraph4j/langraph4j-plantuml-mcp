@@ -1,0 +1,67 @@
+{
+  "type": "process",
+  "title": "Agent Interaction Diagram",
+  "participants": [
+    {
+      "name": "Task",
+      "shape": "rectangle",
+      "description": "Initial task to be processed"
+    },
+    {
+      "name": "LLM",
+      "shape": "rectangle",
+      "description": "Large Language Model for reasoning"
+    },
+    {
+      "name": "Tools",
+      "shape": "rectangle",
+      "description": "Tools used by the agent"
+    },
+    {
+      "name": "Environment",
+      "shape": "rectangle",
+      "description": "External environment where actions take place"
+    }
+  ],
+  "relations": [
+    {
+      "source": "Task",
+      "target": "LLM",
+      "description": "Task is sent to LLM"
+    },
+    {
+      "source": "LLM",
+      "target": "Tools",
+      "description": "LLM uses tools"
+    },
+    {
+      "source": "Tools",
+      "target": "Environment",
+      "description": "Action is performed in the environment"
+    },
+    {
+      "source": "Environment",
+      "target": "Tools",
+      "description": "Environment returns result to tools"
+    },
+    {
+      "source": "Tools",
+      "target": "LLM",
+      "description": "Tools provide feedback to LLM"
+    }
+  ],
+  "containers": [
+    {
+      "name": "Agent",
+      "children": ["LLM", "Tools"],
+      "description": "Agent containing LLM and Tools"
+    }
+  ],
+  "description": [
+    "1. Task is sent to the LLM.",
+    "2. LLM processes the task and uses Tools.",
+    "3. Tools perform an Action in the Environment.",
+    "4. Environment returns a Result to the Tools.",
+    "5. Tools provide feedback to the LLM for further Reasoning."
+  ]
+}
