@@ -4,31 +4,40 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.modelcontextprotocol.client.McpClient;
 import io.modelcontextprotocol.json.McpJsonMapper;
 import io.modelcontextprotocol.json.jackson.JacksonMcpJsonMapper;
-import io.modelcontextprotocol.server.McpServer;
-import io.modelcontextprotocol.server.McpSyncServer;
+import io.modelcontextprotocol.server.McpAsyncServer;
 import io.modelcontextprotocol.spec.McpSchema;
 import io.modelcontextprotocol.transport.inmemory.InMemoryClientTransport;
 import io.modelcontextprotocol.transport.inmemory.InMemoryServerTransportProvider;
 import io.modelcontextprotocol.transport.inmemory.InMemoryTransport;
+import net.sourceforge.plantuml.BlockUml;
+import net.sourceforge.plantuml.SourceStringReader;
+import net.sourceforge.plantuml.error.PSystemError;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.ai.content.Media;
 import org.springframework.core.io.ClassPathResource;
+import org.springframework.util.MimeType;
+import reactor.core.publisher.Mono;
 
-import java.io.IOException;
+import java.io.*;
+import java.nio.charset.Charset;
 import java.time.Duration;
-import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 
+import static java.util.Objects.requireNonNull;
 import static org.junit.jupiter.api.Assertions.*;
 
 public class MCPTest {
 
 
+    final ObjectMapper mapper = new ObjectMapper();
     InMemoryTransport transport;
-    final McpJsonMapper jsonMapper = new JacksonMcpJsonMapper(new ObjectMapper());
-    McpSyncServer server;
+    final McpJsonMapper jsonMapper = new JacksonMcpJsonMapper(mapper);
+    McpAsyncServer server;
 
     @BeforeEach
     public void createSyncMCPServer() {
@@ -36,7 +45,7 @@ public class MCPTest {
 
         var serverProvider = new InMemoryServerTransportProvider(transport);
 
-        server = PlantUMLServer.sync(serverProvider);
+        server = PlantUMLServer.async(serverProvider);
 
     }
 
@@ -63,6 +72,23 @@ public class MCPTest {
         System.out.println(schemaString);
 
     }
+
+    @Test
+    void jsonDescriptionToDiagramModelTest() throws IOException {
+
+        var resource = new ClassPathResource("ReAct_image.json");
+
+        var model = jsonMapper.readValue( resource.getContentAsString( Charset.defaultCharset() ), Diagram.Model.class);
+
+        assertNotNull(model);
+        assertEquals("process", model.type());
+        assertEquals("Agent Interaction Diagram", model.title());
+        assertEquals(4, model.participants().size());
+        assertEquals(5, model.relations().size());
+        assertEquals(1, model.containers().size());
+        assertEquals(5, model.description().size());
+    }
+
     @Test
     void toImageTest() {
 
@@ -103,6 +129,35 @@ public class MCPTest {
     }
 
     @Test
+    void plantUMLScriptEvaluationErrorTest() throws IOException {
+        final var resourceScript = new ClassPathResource( "React_error.plantuml");
+
+        SourceStringReader reader = new SourceStringReader(resourceScript.getContentAsString( Charset.defaultCharset()) );
+
+
+        final List<BlockUml> blocks = reader.getBlocks();
+
+
+        assertEquals( 1, blocks.size());
+
+        var block = blocks.get(0);
+
+        var system = block.getDiagram();
+
+        assertNotNull( system );
+        assertInstanceOf( PSystemError.class, system );
+
+        var systemError = (PSystemError)system;
+
+        var errorUml = systemError.getFirstError();
+
+        assertNotNull( errorUml );
+        assertEquals( "EXECUTION_ERROR 15 Syntax error: LLM", errorUml.toString() );
+        assertEquals( "Syntax error: LLM (Assumed diagram type: component)", errorUml.getError());
+
+
+    }
+    @Test
     void genericDiagramToPlantumlPromptTest() throws Exception  {
 
         var clientTransport = new InMemoryClientTransport(transport);
@@ -136,44 +191,80 @@ public class MCPTest {
     }
 
     @Test
-    void asyncDescribeDiagramFromImageTest() throws Exception  {
+    void describeDiagramFromImageTest() throws Exception  {
 
         var clientTransport = new InMemoryClientTransport(transport);
 
+        final var imageResource = new ClassPathResource( "React_image.png");
+
+        final var mimeType = MimeType.valueOf( "image/png");
+
+        final var chatVisionModel = AIModel.OLLAMA_VISION.model("qwen3-vl:latest");
+        final var chatMiniModel = AIModel.OLLAMA_VISION.model("qwen3:8b");
+        //final var chatVisionModel = AIModel.OPENAI_VISION.model("gpt-4o");
+
         var client = McpClient.async(clientTransport)
-                .requestTimeout(Duration.ofMinutes(5))
+                .requestTimeout(Duration.ofMinutes(10))
                 .capabilities( McpSchema.ClientCapabilities.builder()
-                        //.sampling()
+                        .sampling()
                         .build())
+                .sampling( request -> {
+
+                    final var instruction =  (McpSchema.TextContent)request.messages().get(0).content();
+
+                    var response = request.modelPreferences().hints().stream()
+                            .filter( h -> "vision".equalsIgnoreCase(h.name()))
+                            .findFirst()
+                            .map( h -> {
+                                var userMessage = UserMessage.builder()
+                                                .text(instruction.text())
+                                                .media(new Media(mimeType, imageResource))
+                                                .build();
+                                return ChatClient.builder(chatVisionModel)
+                                        .build()
+                                        .prompt()
+                                        .messages(userMessage)
+                                        .call()
+                                        .chatResponse();
+                            }).orElseGet( () -> {
+                                var userMessage = UserMessage.builder()
+                                        .text(instruction.text())
+                                        .build();
+                                return ChatClient.builder(chatMiniModel)
+                                        .build()
+                                        .prompt()
+                                        .messages(userMessage)
+                                        .call()
+                                        .chatResponse();
+                            });
+
+                    var result =  McpSchema.CreateMessageResult.builder()
+                                    .message( requireNonNull(response, "response cannot be null")
+                                            .getResult()
+                                            .getOutput()
+                                            .getText())
+                                    .build();
+                    return Mono.just(result);
+                })
                 .build();
 
-        var imageResource = new ClassPathResource( "React_image.png");
+            var result = client.initialize().flatMap( init -> {
+                var callToolRequest = new McpSchema.CallToolRequest("describe_diagram_from_image", Map.of());
 
-        var bytes = imageResource.
-                getInputStream().
-                readAllBytes();
+                return client.callTool(callToolRequest);
 
-        final var imageData = Base64.getEncoder().encodeToString(bytes);
-        final var mimeType = "image/png";
-
-        var result = client.initialize()
-            .flatMap( initResult -> client.listTools() )
-            .flatMap( toolList -> {
-
-                var callToolRequest = new McpSchema.CallToolRequest("describe_diagram_from_image",
-                        Map.of("image_data", imageData, "mime_type", mimeType)
-                );
-
-                return client.callTool( callToolRequest );
             })
-            .doFinally( signalType -> client.closeGracefully().subscribe() )
-            .block();
+            .doFinally( signal -> client.closeGracefully().subscribe() )
+            .block()
+            ;
 
-         assertNotNull( result );
+            assertNotNull( result );
+            assertFalse(result.isError() );
+            assertFalse( result.content().isEmpty());
+            assertEquals( 1, result.content().size() );
+            assertInstanceOf(McpSchema.TextContent.class, result.content().get(0) );
 
-        System.out.println( result );
-
-
+            System.out.println( result.content().get(0) );
     }
 
 }

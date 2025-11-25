@@ -2,15 +2,16 @@ package org.bsc.langgraph4j.mcp;
 
 import io.modelcontextprotocol.server.McpServerFeatures;
 import io.modelcontextprotocol.spec.McpSchema;
+import reactor.core.publisher.Mono;
 
 import java.util.List;
-import java.util.Map;
+import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
 import static java.lang.String.format;
 
-public interface PlantUMLPrompts {
+interface PlantUMLPrompts {
 
     String DESCRIBE_DIAGRAM_SCHEMA = """
               {
@@ -127,6 +128,7 @@ public interface PlantUMLPrompts {
             Describe the diagram in the image step by step so we can translate it into diagram-as-code syntax.
             
             Result must be a JSON object that must adhere to the following <JSON SCHEMA>:
+            
             <JSON-SCHEMA>
             %s
             </JSON-SCHEMA>
@@ -135,7 +137,19 @@ public interface PlantUMLPrompts {
             """, DESCRIBE_DIAGRAM_SCHEMA);
 
 
-    Function<Map<String,Object>,String> GENERIC_DIAGRAM_TO_PLANTUML = (args ) -> format("""
+    Function<String,String> SEQUENCE_DIAGRAM_TO_PLANTUML = ( String diagramDescription ) -> format("""
+            Translate the diagram description into plantUML syntax.
+            Also put the diagram description in the legend in the form:
+            legend
+            <description with a bullet point for each steps>
+            end legend
+            
+            <DIAGRAM_DESCRIPTION>
+            %s
+            </DIAGRAM_DESCRIPTION>
+            """, diagramDescription);
+
+    Function<String,String> GENERIC_DIAGRAM_TO_PLANTUML = (String diagramDescription ) -> format("""
             Translate the JSON data represented in <DIAGRAM_DESCRIPTION> into a plantuml script considering:
             
             1. The participants' shape must be translated in their plantuml counterpart using the following conversion rules :
@@ -157,26 +171,51 @@ public interface PlantUMLPrompts {
             <DIAGRAM_DESCRIPTION>
             %s
             </DIAGRAM_DESCRIPTION>
-            """, args.get("diagram_description"));
+            """, diagramDescription);
 
-    static McpServerFeatures.SyncPromptSpecification syncDescribeDiagramFromImageSpecification() {
+    BiFunction<String,String,String> REVIEW_DIAGRAM = ( script, error ) -> format("""
+            You are my PlantUML reviewer:
+            
+            In the PlantUML <DIAGRAM_SCRIPT> there is an <EVALUATION_ERROR>
+            
+            <DIAGRAM_SCRIPT>
+            %s
+            </DIAGRAM_SCRIPT>
+            
+            <EVALUATION_ERROR>
+            %s
+            </EVALUATION_ERROR>
+            
+            Error sample
+            ----------------
+            EXECUTION_ERROR 15 Syntax error: LLM
+            
+            In the sample above the error indicates that there is at line "15" a "Syntax error" concerning element "LLM"
+            
+            Rewrite the PlantUML diagram script, correcting the error and applying this correction to any similar errors you find in the script itself.
+            You MUST return only PlantUML script as plain text not using markdown notation
+            """, script, error);
+
+    static McpServerFeatures.AsyncPromptSpecification describeDiagramFromImageSpecification() {
         final var description = "describe an image of a diagram into a structured JSON content ";
-        return new McpServerFeatures.SyncPromptSpecification(
+        return new McpServerFeatures.AsyncPromptSpecification(
                 new McpSchema.Prompt("describe_diagram_from_image",
                         description,
                         List.of()),
                 (exchange, request) -> {
 
                     // Prompt implementation
-                    return new McpSchema.GetPromptResult(description,
+                    var result =  new McpSchema.GetPromptResult(description,
                             List.of( new McpSchema.PromptMessage( McpSchema.Role.ASSISTANT,
                                     new McpSchema.TextContent(DESCRIBE_DIAGRAM_FROM_IMAGE.get()) )));
+
+                    return Mono.just( result );
                 });
     }
 
-    static McpServerFeatures.SyncPromptSpecification syncGenericDiagramToPlantumlSpecification() {
+    static McpServerFeatures.AsyncPromptSpecification genericDiagramToPlantumlSpecification() {
         final var description = "convert a generic diagram description to plantuml syntax";
-        return new McpServerFeatures.SyncPromptSpecification(
+        return new McpServerFeatures.AsyncPromptSpecification(
                 new McpSchema.Prompt("generic_diagram_to_plantuml",
                         description,
                         List.of(
@@ -186,10 +225,45 @@ public interface PlantUMLPrompts {
                         )),
                 (exchange, request) -> {
 
+
+                    var diagramDescription = request.arguments().get("diagram_description");
+                    if( diagramDescription == null ) {
+                        return Mono.error( () -> new IllegalArgumentException("missing diagram_description param"));
+                    }
+
                     // Prompt implementation
-                    return new McpSchema.GetPromptResult(description,
+                    var result = new McpSchema.GetPromptResult(description,
                             List.of( new McpSchema.PromptMessage( McpSchema.Role.ASSISTANT,
-                                    new McpSchema.TextContent(GENERIC_DIAGRAM_TO_PLANTUML.apply(request.arguments())) )));
+                                    new McpSchema.TextContent(GENERIC_DIAGRAM_TO_PLANTUML.apply( diagramDescription.toString() )) )));
+
+                    return Mono.just( result );
+                });
+    }
+
+    static McpServerFeatures.AsyncPromptSpecification sequenceDiagramToPlantumlSpecification() {
+        final var description = "convert a sequence diagram description to plantuml syntax";
+        return new McpServerFeatures.AsyncPromptSpecification(
+                new McpSchema.Prompt("sequence_diagram_to_plantuml",
+                        description,
+                        List.of(
+                                new McpSchema.PromptArgument(
+                                        "diagram_description",
+                                        "diagram description in JSON format", true)
+                        )),
+                (exchange, request) -> {
+
+
+                    var diagramDescription = request.arguments().get("diagram_description");
+                    if( diagramDescription == null ) {
+                        return Mono.error( () -> new IllegalArgumentException("missing diagram_description param"));
+                    }
+
+                    // Prompt implementation
+                    var result = new McpSchema.GetPromptResult(description,
+                            List.of( new McpSchema.PromptMessage( McpSchema.Role.ASSISTANT,
+                                    new McpSchema.TextContent(SEQUENCE_DIAGRAM_TO_PLANTUML.apply( diagramDescription.toString() )) )));
+
+                    return Mono.just( result );
                 });
     }
 

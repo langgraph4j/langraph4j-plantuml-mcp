@@ -2,35 +2,30 @@ package org.bsc.langgraph4j.mcp;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import io.modelcontextprotocol.server.McpAsyncServerExchange;
 import io.modelcontextprotocol.server.McpServerFeatures;
-import io.modelcontextprotocol.server.McpSyncServerExchange;
 import io.modelcontextprotocol.spec.McpSchema;
 import net.sourceforge.plantuml.SourceStringReader;
-import org.springframework.ai.chat.client.ChatClient;
-import org.springframework.ai.chat.messages.UserMessage;
-import org.springframework.ai.content.Media;
-import org.springframework.core.io.ByteArrayResource;
-import org.springframework.util.MimeType;
+import org.bsc.langgraph4j.*;
+import reactor.core.publisher.Mono;
 
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Supplier;
 
-import static java.util.Objects.requireNonNull;
 import static java.util.concurrent.CompletableFuture.completedFuture;
 import static java.util.concurrent.CompletableFuture.failedFuture;
 
 public interface PlantUMLTools {
 
-
     record OutputImage(
             Path path,
-            String description ) {
+            String description) {
         @JsonCreator
         public OutputImage(
                 @JsonProperty("path") String path,
@@ -39,52 +34,58 @@ public interface PlantUMLTools {
         }
     }
 
+    static Mono<McpSchema.CallToolResult> toImage(McpAsyncServerExchange exchange, McpSchema.CallToolRequest request) {
+        Supplier<CompletableFuture<OutputImage>> _toImage = () -> {
 
-    static  McpSchema.CallToolResult toImage(McpSyncServerExchange exchange, McpSchema.CallToolRequest request ) {
-        var script = String.valueOf(request.arguments().get("script"));
-        var outputPath = String.valueOf(request.arguments().get("outputPath"));
+            var scriptArg = request.arguments().get("script");
+            if( scriptArg == null ) {
+                return failedFuture( new IllegalArgumentException("script cannot be null"));
+            }
 
-        final var builder = McpSchema.CallToolResult.builder();
+            var outputPathArg = request.arguments().get("outputPath");
+            if( outputPathArg == null ) {
+                return failedFuture( new IllegalArgumentException("outputPath cannot be null"));
+            }
 
-        return toImage( script, Path.of(outputPath) )
-                .thenApply( result ->
-                    builder.structuredContent( result )
-                            .build()
-                )
-                .exceptionally( ex ->
-                    builder.isError(true)
-                            .addTextContent( ex.getMessage() )
-                            .build()
-                )
-                .join();
+            var outputPath = Path.of( outputPathArg.toString() );
 
-    }
+            var reader = new SourceStringReader(scriptArg.toString());
 
-    static CompletableFuture<OutputImage> toImage( String script, Path outputPath )  {
-        requireNonNull( outputPath, "outputPath cannot be null");
-        var reader = new SourceStringReader( requireNonNull( script, "script cannot be null"));
-
-        if( Files.notExists(outputPath) ) {
-            if( outputPath.getParent() != null ) {
-                try {
-                    Files.createDirectories( outputPath.getParent() );
-                } catch (IOException e) {
-                    return failedFuture(e);
+            if (Files.notExists(outputPath)) {
+                if (outputPath.getParent() != null) {
+                    try {
+                        Files.createDirectories(outputPath.getParent());
+                    } catch (IOException e) {
+                        return failedFuture(e);
+                    }
                 }
             }
-        }
 
-        // Output the image to a file and capture its description.
-        try(OutputStream out = new java.io.FileOutputStream(outputPath.toFile())) {
-            var description = reader.outputImage(out);
-            return completedFuture(new OutputImage(outputPath, description.getDescription()));
-        }
-        catch (IOException e) {
-            return failedFuture(e);
-        }
+            // Output the image to a file and capture its description.
+            try (OutputStream out = new java.io.FileOutputStream(outputPath.toFile())) {
+                var description = reader.outputImage(out);
+                return completedFuture(new OutputImage(outputPath, description.getDescription()));
+            } catch (IOException e) {
+                return failedFuture(e);
+            }
+        };
+
+        return Mono.fromFuture( _toImage.get()
+                .thenApply(result ->
+                        McpSchema.CallToolResult.builder()
+                                .structuredContent(result)
+                                .build()
+                )
+                .exceptionally(ex ->
+                        McpSchema.CallToolResult.builder()
+                                .isError(true)
+                                .addTextContent(ex.getMessage())
+                                .build()
+                ));
+
     }
 
-    static McpServerFeatures.SyncToolSpecification toImageSpecification() {
+    static McpServerFeatures.AsyncToolSpecification toImageSpecification() {
 
         final var schema = McpSchema.Tool.builder()
                 .description("generate png file image from the plantuml script")
@@ -93,81 +94,75 @@ public interface PlantUMLTools {
                         new McpSchema.JsonSchema("object",
                                 Map.of("script", "string",
                                         "outputPath", "string"),
-                                List.of( "script",
+                                List.of("script",
                                         "outputPath"), false, null, null))
                 .build();
 
-        return McpServerFeatures.SyncToolSpecification.builder()
-                .tool( schema )
+        return McpServerFeatures.AsyncToolSpecification.builder()
+                .tool(schema)
                 .callHandler(PlantUMLTools::toImage)
                 .build();
     }
 
-    static  McpSchema.CallToolResult describeDiagramFromImage(McpSyncServerExchange exchange, McpSchema.CallToolRequest request ) {
 
-        final var builder = McpSchema.CallToolResult.builder();
+    static Mono<McpSchema.CallToolResult> describeDiagramFromImage(McpAsyncServerExchange exchange, McpSchema.CallToolRequest request) {
+
+        // Check if client supports sampling
+        if (exchange.getClientCapabilities().sampling() == null) {
+            return Mono.just(McpSchema.CallToolResult.builder()
+                                    .isError(true)
+                                    .addTextContent("Client does not support AI capabilities")
+                                    .build());
+        }
+
 
         try {
-            var base64Data = requireNonNull(request.arguments().get("image_data"), "image_data is required");
+            var compileConfig = CompileConfig.builder().build();
 
-            var pMimeType = requireNonNull(request.arguments().get("mime_type"), "mime_type is required");
+            var workflow = PlantUMLMainWorkflow.builder()
+                    .build( exchange, request )
+                    .compile( compileConfig );
 
-            var mimeType = MimeType.valueOf(pMimeType.toString());
+            var runnableConfig = RunnableConfig.builder().build();
 
-            byte[] dataBytes = Base64.getDecoder().decode(base64Data.toString());
+            var futureResult = CompletableFuture.supplyAsync( () ->
+                    workflow
+                    .invoke(GraphInput.noArgs(), runnableConfig)
+                    .flatMap(PlantUMLMainWorkflow.State::plantUMLScript)
+                    .map( script -> McpSchema.CallToolResult.builder()
+                            .addTextContent( script ))
+                    .orElseGet( () -> McpSchema.CallToolResult.builder()
+                            .isError(true)
+                            .addTextContent("error running agentic workflow"))
+                    .build());
 
-            var chatModel = AIModel.OLLAMA_VISION.model("qwen3-vl:latest");
-            //var chatModel = AiModel.OPENAI_VISION.model("gpt-4o");
+            return Mono.fromFuture( futureResult );
 
-            var userMessage = UserMessage.builder()
-                    .text(PlantUMLPrompts.DESCRIBE_DIAGRAM_FROM_IMAGE.get())
-                    .media(new Media(mimeType, new ByteArrayResource(dataBytes)))
-                    .build();
-
-            var response = ChatClient.builder(chatModel)
-                    .build()
-                    .prompt()
-                    .messages(userMessage)
-                    .call()
-                    .chatResponse()
-                    ;
-
-            return builder
-                    .addTextContent( requireNonNull(response, "response cannot be null")
-                            .getResult()
-                            .getOutput()
-                            .getText() )
-                    .build();
-        }
-        catch( Throwable ex  ) {
-            return builder.isError(true).addTextContent(ex.toString()).build();
+        } catch (GraphStateException e) {
+            return Mono.just(McpSchema.CallToolResult.builder()
+                    .isError(true)
+                    .addTextContent("error creating agentic workflow %s".formatted(e.getMessage()))
+                    .build());
         }
 
     }
 
-    static McpServerFeatures.SyncToolSpecification describeDiagramFromImageSpecification() {
+
+    static McpServerFeatures.AsyncToolSpecification describeDiagramFromImageSpecification() {
 
         final var inputSchema = new McpSchema.JsonSchema("object",
-                Map.of("image_data",
-                        Map.of("type", "string",
-                                "description", "Base64-encoded image data")
-                        ,
-                        "mime_type",
-                        Map.of( "type", "string",
-                                "description", "MIME type of the image (e.g., 'image/jpeg', 'image/png",
-                                "enum", List.of("image/jpeg", "image/png"))
-                ),
-                List.of( "image_data"), false, null, null);
+                Map.of(),
+                List.of(), false, null, null);
 
 
         final var schema = McpSchema.Tool.builder()
                 .description("generate diagram description from an image")
                 .name("describe_diagram_from_image")
-                .inputSchema( inputSchema )
+                .inputSchema(inputSchema)
                 .build();
 
-        return McpServerFeatures.SyncToolSpecification.builder()
-                .tool( schema )
+        return McpServerFeatures.AsyncToolSpecification.builder()
+                .tool(schema)
                 .callHandler(PlantUMLTools::describeDiagramFromImage)
                 .build();
 

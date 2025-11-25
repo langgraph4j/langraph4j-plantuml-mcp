@@ -1,0 +1,28 @@
+@startuml
+title "Agent System Process"
+
+rectangle "Task" as Task <<Task>>
+rectangle "LLM" as LLM <<LLM>>
+rectangle "Tools" as Tools <<Tools>>
+rectangle "Environment" as Environment <<Environment>>
+
+Task --> LLM : Task input to LLM
+LLM --> Tools : LLM to Tools
+Tools --> Environment : Action from Tools to Environment
+Environment --> LLM : Result from Environment to LLM
+LLM --> LLM : Reasoning loop
+
+package "Agent" {
+    LLM
+    Tools
+    Environment
+}
+
+legend
+- Task is input to LLM.
+- LLM performs Reasoning (self-loop) and sends an Action to Tools.
+- Tools execute the Action in the Environment.
+- Environment returns a Result to LLM.
+- Agent (containing LLM, Tools, Environment) processes the cycle.
+end legend
+@enduml
