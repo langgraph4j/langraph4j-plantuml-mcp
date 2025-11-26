@@ -9,13 +9,13 @@ public interface PlantumlMCPServer {
     static McpAsyncServer async(McpServerTransportProvider serverTransportProviderProvider) {
         return McpServer.async(serverTransportProviderProvider)
                 .tools(
-                        PlantUMLTools.toImageSpecification(),
-                        PlantUMLTools.describeDiagramFromImageSpecification()
+                        PlantumlTools.toImageSpecification(),
+                        PlantumlTools.describeDiagramFromImageSpecification()
                 )
                 .prompts(
-                        PlantUMLPrompts.genericDiagramToPlantumlSpecification(),
-                        PlantUMLPrompts.describeDiagramFromImageSpecification(),
-                        PlantUMLPrompts.sequenceDiagramToPlantumlSpecification())
+                        PlantumlPrompts.genericDiagramToPlantumlSpecification(),
+                        PlantumlPrompts.describeDiagramFromImageSpecification(),
+                        PlantumlPrompts.sequenceDiagramToPlantumlSpecification())
                 .build();
 
     }

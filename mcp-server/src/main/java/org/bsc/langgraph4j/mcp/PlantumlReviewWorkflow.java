@@ -22,7 +22,7 @@ import static java.util.concurrent.CompletableFuture.completedFuture;
 import static java.util.concurrent.CompletableFuture.failedFuture;
 import static org.bsc.langgraph4j.GraphDefinition.START;
 
-interface PlantUMLReviewWorkflow {
+interface PlantumlReviewWorkflow {
 
     class EvaluationResultException extends Exception  {
         public final ErrorUml errorUml;
@@ -60,7 +60,7 @@ interface PlantUMLReviewWorkflow {
             return completedFuture(null);
         }
 
-        private AsyncNodeActionWithConfig<PlantUMLMainWorkflow.State> evaluateResult(McpAsyncServerExchange exchange,
+        private AsyncNodeActionWithConfig<PlantumlMainWorkflow.State> evaluateResult(McpAsyncServerExchange exchange,
                                                                                      McpSchema.CallToolRequest request )
         {
 
@@ -85,7 +85,7 @@ interface PlantUMLReviewWorkflow {
 
         }
 
-        private AsyncNodeActionWithConfig<PlantUMLMainWorkflow.State> reviewResult(McpAsyncServerExchange exchange,
+        private AsyncNodeActionWithConfig<PlantumlMainWorkflow.State> reviewResult(McpAsyncServerExchange exchange,
                                                                                    McpSchema.CallToolRequest request )
         {
             return ( state, config ) -> {
@@ -102,7 +102,7 @@ interface PlantUMLReviewWorkflow {
 
                 var samplingMessage = new McpSchema.SamplingMessage(
                         McpSchema.Role.ASSISTANT,
-                        new McpSchema.TextContent(PlantUMLPrompts.REVIEW_DIAGRAM.apply(state.plantUMLScript().get(), evaluationError.get())));
+                        new McpSchema.TextContent(PlantumlPrompts.REVIEW_DIAGRAM.apply(state.plantUMLScript().get(), evaluationError.get())));
 
                 // Create a sampling request
                 var messageRequest = McpSchema.CreateMessageRequest.builder()
@@ -120,13 +120,14 @@ interface PlantUMLReviewWorkflow {
                 // Request sampling from the client
                 return exchange.createMessage(messageRequest)
                         .map(result -> (McpSchema.TextContent) result.content())
-                        .map( content -> Map.<String,Object>of( "plantuml_script", content.text()) )
+                        .map( content -> PlantumlTools.sanitizeDiagramOutput( content.text() ) )
+                        .map( content -> Map.<String,Object>of( "plantuml_script", content) )
                         .toFuture();
             };
         }
 
-        private AsyncEdgeAction<PlantUMLMainWorkflow.State> routeEvaluationResult(McpAsyncServerExchange exchange,
-                                                                         McpSchema.CallToolRequest request )
+        private AsyncEdgeAction<PlantumlMainWorkflow.State> routeEvaluationResult(McpAsyncServerExchange exchange,
+                                                                                  McpSchema.CallToolRequest request )
         {
             return  state  -> {
                 Optional<EvaluationResult> evaluationResult = state.value("evaluation_result");
@@ -143,9 +144,9 @@ interface PlantUMLReviewWorkflow {
             };
         }
 
-        StateSerializer<PlantUMLMainWorkflow.State> serializer;
+        StateSerializer<PlantumlMainWorkflow.State> serializer;
 
-        public StateGraph<PlantUMLMainWorkflow.State> build(McpAsyncServerExchange exchange, McpSchema.CallToolRequest request ) throws GraphStateException {
+        public StateGraph<PlantumlMainWorkflow.State> build(McpAsyncServerExchange exchange, McpSchema.CallToolRequest request ) throws GraphStateException {
 
             return new StateGraph<>( requireNonNull( serializer, "serializer cannot be null" ) )
                         .addNode("evaluate_result", evaluateResult( exchange, request ))
@@ -162,14 +163,14 @@ interface PlantUMLReviewWorkflow {
         }
 
 
-        public PlantUMLReviewWorkflow.Builder stateSerializer(StateSerializer<PlantUMLMainWorkflow.State> serializer) {
+        public PlantumlReviewWorkflow.Builder stateSerializer(StateSerializer<PlantumlMainWorkflow.State> serializer) {
             this.serializer = serializer;
             return this;
         }
     }
 
-    static PlantUMLReviewWorkflow.Builder builder() {
-        return new PlantUMLReviewWorkflow.Builder();
+    static PlantumlReviewWorkflow.Builder builder() {
+        return new PlantumlReviewWorkflow.Builder();
     }
 
 }

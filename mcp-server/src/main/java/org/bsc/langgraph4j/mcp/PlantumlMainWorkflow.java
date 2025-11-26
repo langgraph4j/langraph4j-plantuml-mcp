@@ -24,8 +24,9 @@ import static java.util.concurrent.CompletableFuture.completedFuture;
 import static java.util.concurrent.CompletableFuture.failedFuture;
 import static org.bsc.langgraph4j.GraphDefinition.END;
 import static org.bsc.langgraph4j.GraphDefinition.START;
+import static org.bsc.langgraph4j.mcp.PlantumlTools.sanitizeDiagramOutput;
 
-interface PlantUMLMainWorkflow {
+interface PlantumlMainWorkflow {
 
     class State extends AgentState {
 
@@ -62,7 +63,7 @@ interface PlantUMLMainWorkflow {
 
                 var samplingMessage = new McpSchema.SamplingMessage(
                         McpSchema.Role.ASSISTANT,
-                        new McpSchema.TextContent(PlantUMLPrompts.DESCRIBE_DIAGRAM_FROM_IMAGE.get()));
+                        new McpSchema.TextContent(PlantumlPrompts.DESCRIBE_DIAGRAM_FROM_IMAGE.get()));
 
                 // Create a sampling request
                 var messageRequest = McpSchema.CreateMessageRequest.builder()
@@ -96,7 +97,7 @@ interface PlantUMLMainWorkflow {
 
                 var samplingMessage = new McpSchema.SamplingMessage(
                         McpSchema.Role.ASSISTANT,
-                        new McpSchema.TextContent(PlantUMLPrompts.GENERIC_DIAGRAM_TO_PLANTUML.apply(diagramSource.get())));
+                        new McpSchema.TextContent(PlantumlPrompts.GENERIC_DIAGRAM_TO_PLANTUML.apply(diagramSource.get())));
 
                 // Create a sampling request
                 var messageRequest = McpSchema.CreateMessageRequest.builder()
@@ -114,7 +115,8 @@ interface PlantUMLMainWorkflow {
                 // Request sampling from the client
                 return exchange.createMessage(messageRequest)
                         .map(result -> (McpSchema.TextContent) result.content())
-                        .map( content -> Map.<String,Object>of( "plantuml_script", content.text()) )
+                        .map( content -> PlantumlTools.sanitizeDiagramOutput( content.text() ) )
+                        .map( content -> Map.<String,Object>of( "plantuml_script", content) )
                         .toFuture();
             };
         }
@@ -131,7 +133,7 @@ interface PlantUMLMainWorkflow {
 
                 var samplingMessage = new McpSchema.SamplingMessage(
                         McpSchema.Role.ASSISTANT,
-                        new McpSchema.TextContent(PlantUMLPrompts.SEQUENCE_DIAGRAM_TO_PLANTUML.apply(diagramSource.get())));
+                        new McpSchema.TextContent(PlantumlPrompts.SEQUENCE_DIAGRAM_TO_PLANTUML.apply(diagramSource.get())));
 
                 // Create a sampling request
                 var messageRequest = McpSchema.CreateMessageRequest.builder()
@@ -149,7 +151,8 @@ interface PlantUMLMainWorkflow {
                 // Request sampling from the client
                 return exchange.createMessage(messageRequest)
                         .map(result -> (McpSchema.TextContent) result.content())
-                        .map( content -> Map.<String,Object>of( "plantuml_script", content.text()) )
+                        .map( content -> sanitizeDiagramOutput( content.text() ) )
+                        .map( content -> Map.<String,Object>of( "plantuml_script", content) )
                         .toFuture();
             };
         }
@@ -181,12 +184,15 @@ interface PlantUMLMainWorkflow {
 
             var serializer = new StateSerializer();
 
-            var reviewWorkflow = PlantUMLReviewWorkflow.builder()
+            var reviewWorkflow = PlantumlReviewWorkflow.builder()
                                     .stateSerializer( serializer )
                                     .build( exchange, request )
                                     .compile(CompileConfig.builder()
-                                            .recursionLimit(3)
+                                            .recursionLimit(10)
                                             .build());
+
+            AsyncNodeActionWithConfig<State> noDiagramReview = ( state, config ) ->
+                                                                    completedFuture( Map.of() );
 
             return new StateGraph<>( serializer )
                             .addNode("describe_image", describeDiagramImage( exchange, request )  )

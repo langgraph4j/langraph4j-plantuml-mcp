@@ -121,8 +121,8 @@ public class MCPTest {
 
             assertNotNull(structuredContext);
             assertInstanceOf( Map.class, structuredContext);
-            var output = jsonMapper.convertValue( structuredContext, PlantUMLTools.OutputImage.class );
-            assertInstanceOf( PlantUMLTools.OutputImage.class, output);
+            var output = jsonMapper.convertValue( structuredContext, PlantumlTools.OutputImage.class );
+            assertInstanceOf( PlantumlTools.OutputImage.class, output);
 
 
         }

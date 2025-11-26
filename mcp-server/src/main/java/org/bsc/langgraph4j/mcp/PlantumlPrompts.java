@@ -11,7 +11,7 @@ import java.util.function.Supplier;
 
 import static java.lang.String.format;
 
-interface PlantUMLPrompts {
+interface PlantumlPrompts {
 
     String DESCRIBE_DIAGRAM_SCHEMA = """
               {
@@ -138,7 +138,8 @@ interface PlantUMLPrompts {
 
 
     Function<String,String> SEQUENCE_DIAGRAM_TO_PLANTUML = ( String diagramDescription ) -> format("""
-            Translate the diagram description into plantUML syntax.
+            Translate the diagram description into raw plantUML syntax.
+            
             Also put the diagram description in the legend in the form:
             legend
             <description with a bullet point for each steps>
@@ -147,10 +148,12 @@ interface PlantUMLPrompts {
             <DIAGRAM_DESCRIPTION>
             %s
             </DIAGRAM_DESCRIPTION>
+            
+           
             """, diagramDescription);
 
     Function<String,String> GENERIC_DIAGRAM_TO_PLANTUML = (String diagramDescription ) -> format("""
-            Translate the JSON data represented in <DIAGRAM_DESCRIPTION> into a plantuml script considering:
+            Translate the JSON data represented in <DIAGRAM_DESCRIPTION> into a raw plantuml script considering:
             
             1. The participants' shape must be translated in their plantuml counterpart using the following conversion rules :
                 - "rectangle" shape  must be translated into  plantuml's "rectangle"

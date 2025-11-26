@@ -17,11 +17,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Supplier;
+import java.util.regex.Pattern;
 
 import static java.util.concurrent.CompletableFuture.completedFuture;
 import static java.util.concurrent.CompletableFuture.failedFuture;
 
-interface PlantUMLTools {
+interface PlantumlTools {
 
     record OutputImage(
             Path path,
@@ -32,6 +33,25 @@ interface PlantUMLTools {
                 @JsonProperty("description") String description) {
             this(Path.of(path), description);
         }
+    }
+
+    static String sanitizeDiagramOutput(String output ) {
+        final var pattern = "^.*(@startuml(.*?)@enduml).*$";
+
+        // Create a Pattern object
+        final var jsonPattern = Pattern.compile(pattern, Pattern.DOTALL | Pattern.MULTILINE);
+
+        // Create a Matcher object
+        java.util.regex.Matcher matcher = jsonPattern.matcher(output);
+
+        // Check if a match is found
+        if (!matcher.find()) {
+            return "@startuml\n%s\n@enduml".formatted(matcher.group(2));
+            //throw new IllegalArgumentException("no diagram provided!\n%s".formatted( output ));
+        }
+
+        return matcher.group(1);
+
     }
 
     static Mono<McpSchema.CallToolResult> toImage(McpAsyncServerExchange exchange, McpSchema.CallToolRequest request) {
@@ -100,7 +120,7 @@ interface PlantUMLTools {
 
         return McpServerFeatures.AsyncToolSpecification.builder()
                 .tool(schema)
-                .callHandler(PlantUMLTools::toImage)
+                .callHandler(PlantumlTools::toImage)
                 .build();
     }
 
@@ -119,7 +139,7 @@ interface PlantUMLTools {
         try {
             var compileConfig = CompileConfig.builder().build();
 
-            var workflow = PlantUMLMainWorkflow.builder()
+            var workflow = PlantumlMainWorkflow.builder()
                     .build( exchange, request )
                     .compile( compileConfig );
 
@@ -128,7 +148,7 @@ interface PlantUMLTools {
             var futureResult = CompletableFuture.supplyAsync( () ->
                     workflow
                     .invoke(GraphInput.noArgs(), runnableConfig)
-                    .flatMap(PlantUMLMainWorkflow.State::plantUMLScript)
+                    .flatMap(PlantumlMainWorkflow.State::plantUMLScript)
                     .map( script -> McpSchema.CallToolResult.builder()
                             .addTextContent( script ))
                     .orElseGet( () -> McpSchema.CallToolResult.builder()
@@ -163,7 +183,7 @@ interface PlantUMLTools {
 
         return McpServerFeatures.AsyncToolSpecification.builder()
                 .tool(schema)
-                .callHandler(PlantUMLTools::describeDiagramFromImage)
+                .callHandler(PlantumlTools::describeDiagramFromImage)
                 .build();
 
     }
