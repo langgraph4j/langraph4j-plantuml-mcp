@@ -6,7 +6,7 @@ import java.util.List;
 /**
  * Represents a diagram which contains various elements such as participants, relations, and containers.
  */
-public interface Diagram {
+interface Diagram {
 
     /**
      * Represents a participant in an event.

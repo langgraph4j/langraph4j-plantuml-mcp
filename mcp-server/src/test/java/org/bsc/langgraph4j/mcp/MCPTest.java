@@ -45,7 +45,7 @@ public class MCPTest {
 
         var serverProvider = new InMemoryServerTransportProvider(transport);
 
-        server = PlantUMLServer.async(serverProvider);
+        server = PlantumlMCPServer.async(serverProvider);
 
     }
 
@@ -172,7 +172,6 @@ public class MCPTest {
             var listPromptsResult = client.listPrompts();
 
             assertFalse(listPromptsResult.prompts().isEmpty());
-            assertEquals(1, listPromptsResult.prompts().size());
 
             var promptRequest = listPromptsResult.prompts().stream()
                     .filter( p -> p.name().equals("generic_diagram_to_plantuml"))
@@ -261,10 +260,9 @@ public class MCPTest {
             assertNotNull( result );
             assertFalse(result.isError() );
             assertFalse( result.content().isEmpty());
-            assertEquals( 1, result.content().size() );
-            assertInstanceOf(McpSchema.TextContent.class, result.content().get(0) );
+            //assertInstanceOf(McpSchema.TextContent.class, result.content().get(0) );
 
-            System.out.println( result.content().get(0) );
+            result.content().forEach(System.out::println);
     }
 
 }

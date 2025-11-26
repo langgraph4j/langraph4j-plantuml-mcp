@@ -6,7 +6,6 @@ import io.modelcontextprotocol.json.jackson.JacksonMcpJsonMapper;
 import io.modelcontextprotocol.server.McpAsyncServerExchange;
 import io.modelcontextprotocol.spec.McpSchema;
 import org.bsc.langgraph4j.CompileConfig;
-import org.bsc.langgraph4j.CompiledGraph;
 import org.bsc.langgraph4j.GraphStateException;
 import org.bsc.langgraph4j.StateGraph;
 import org.bsc.langgraph4j.action.AsyncEdgeAction;
@@ -26,7 +25,7 @@ import static java.util.concurrent.CompletableFuture.failedFuture;
 import static org.bsc.langgraph4j.GraphDefinition.END;
 import static org.bsc.langgraph4j.GraphDefinition.START;
 
-public interface PlantUMLMainWorkflow {
+interface PlantUMLMainWorkflow {
 
     class State extends AgentState {
 
@@ -186,6 +185,7 @@ public interface PlantUMLMainWorkflow {
                                     .stateSerializer( serializer )
                                     .build( exchange, request )
                                     .compile(CompileConfig.builder()
+                                            .recursionLimit(3)
                                             .build());
 
             return new StateGraph<>( serializer )

@@ -21,7 +21,7 @@ import java.util.function.Supplier;
 import static java.util.concurrent.CompletableFuture.completedFuture;
 import static java.util.concurrent.CompletableFuture.failedFuture;
 
-public interface PlantUMLTools {
+interface PlantUMLTools {
 
     record OutputImage(
             Path path,

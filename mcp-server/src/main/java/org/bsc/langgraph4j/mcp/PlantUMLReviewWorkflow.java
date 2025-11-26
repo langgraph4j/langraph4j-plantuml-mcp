@@ -22,7 +22,7 @@ import static java.util.concurrent.CompletableFuture.completedFuture;
 import static java.util.concurrent.CompletableFuture.failedFuture;
 import static org.bsc.langgraph4j.GraphDefinition.START;
 
-public interface PlantUMLReviewWorkflow {
+interface PlantUMLReviewWorkflow {
 
     class EvaluationResultException extends Exception  {
         public final ErrorUml errorUml;
@@ -46,7 +46,7 @@ public interface PlantUMLReviewWorkflow {
 
             final List<BlockUml> blocks = reader.getBlocks();
             if (blocks.size() != 1) {
-                return failedFuture( new IllegalArgumentException("Invalid PlantUML script") );
+                return failedFuture( new IllegalArgumentException( "Invalid PlantUML script (block.size = %d)".formatted( blocks.size())) );
             }
 
             final Diagram system = blocks.get(0).getDiagram();
@@ -76,8 +76,7 @@ public interface PlantUMLReviewWorkflow {
                     .exceptionally( e -> {
                         if( e.getCause() instanceof EvaluationResultException ex ) {
                             return Map.of("evaluation_result", EvaluationResult.EVALUATION_ERROR,
-                                    "evaluation_error",  ex.getCause().getMessage());
-                                    //"evaluationErrorType", ((PlantUMLAction.Error)e.getCause()).getType());
+                                    "evaluation_error",  ex.getMessage());
                         }
                         return Map.of("evaluation_result", EvaluationResult.ERROR,
                                 "evaluation_error",  e.getCause().getMessage());

@@ -4,7 +4,7 @@ import io.modelcontextprotocol.server.McpAsyncServer;
 import io.modelcontextprotocol.server.McpServer;
 import io.modelcontextprotocol.spec.McpServerTransportProvider;
 
-public interface PlantUMLServer {
+public interface PlantumlMCPServer {
 
     static McpAsyncServer async(McpServerTransportProvider serverTransportProviderProvider) {
         return McpServer.async(serverTransportProviderProvider)
