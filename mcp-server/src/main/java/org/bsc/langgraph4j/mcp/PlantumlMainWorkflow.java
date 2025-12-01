@@ -5,7 +5,6 @@ import io.modelcontextprotocol.json.McpJsonMapper;
 import io.modelcontextprotocol.json.jackson.JacksonMcpJsonMapper;
 import io.modelcontextprotocol.server.McpAsyncServerExchange;
 import io.modelcontextprotocol.spec.McpSchema;
-import org.bsc.langgraph4j.CompileConfig;
 import org.bsc.langgraph4j.GraphStateException;
 import org.bsc.langgraph4j.StateGraph;
 import org.bsc.langgraph4j.action.AsyncEdgeAction;
@@ -24,6 +23,8 @@ import static java.util.concurrent.CompletableFuture.completedFuture;
 import static java.util.concurrent.CompletableFuture.failedFuture;
 import static org.bsc.langgraph4j.GraphDefinition.END;
 import static org.bsc.langgraph4j.GraphDefinition.START;
+import static org.bsc.langgraph4j.mcp.MCPNotificationsSupport.mcpNotifyLog;
+import static org.bsc.langgraph4j.mcp.MCPNotificationsSupport.mcpNotifyProgress;
 import static org.bsc.langgraph4j.mcp.PlantumlTools.sanitizeDiagramOutput;
 
 interface PlantumlMainWorkflow {
@@ -38,6 +39,10 @@ interface PlantumlMainWorkflow {
             return value( "plantuml_script");
         }
 
+        public double progress() {
+            return this.<Double>value("process_progress").orElse(0.0);
+        }
+
         public State(Map<String, Object> initData) {
             super(initData);
         }
@@ -50,7 +55,7 @@ interface PlantumlMainWorkflow {
         }
     }
 
-    class Builder {
+    class Builder  {
 
         final ObjectMapper mapper = new ObjectMapper();
         final McpJsonMapper jsonMapper = new JacksonMcpJsonMapper(mapper);
@@ -58,6 +63,8 @@ interface PlantumlMainWorkflow {
         private AsyncNodeActionWithConfig<State> describeDiagramImage(  McpAsyncServerExchange exchange,
                                                                         McpSchema.CallToolRequest request )
         {
+
+            final var logger = "describeDiagramImage";
 
             return ( state, config ) -> {
 
@@ -79,8 +86,15 @@ interface PlantumlMainWorkflow {
 
                 // Request sampling from the client
                 return exchange.createMessage(messageRequest)
+                        .doOnSubscribe( subscription -> {
+                            mcpNotifyLog(exchange, request, McpSchema.LoggingLevel.NOTICE, logger, "start ");
+                        })
+                        .doOnSuccess( signal -> {
+                            mcpNotifyProgress(exchange, request, state.progress()+1,  logger);
+                            mcpNotifyLog( exchange, request, McpSchema.LoggingLevel.NOTICE, logger, "end" );
+                        })
                         .map(result -> (McpSchema.TextContent) result.content())
-                        .map( content -> Map.<String,Object>of( "diagram_description", content.text()) )
+                        .map( content -> Map.<String,Object>of( "diagram_description", content.text(), "process_progress", state.progress()+1) )
                         .toFuture();
             };
         }
@@ -88,6 +102,7 @@ interface PlantumlMainWorkflow {
         private AsyncNodeActionWithConfig<State> genericDiagramToPlantUML(McpAsyncServerExchange exchange,
                                                                           McpSchema.CallToolRequest request )
         {
+            final var logger = "genericDiagramToPlantUML";
             return ( state, config ) -> {
 
                 var diagramSource = state.diagramDescription();
@@ -114,9 +129,22 @@ interface PlantumlMainWorkflow {
 
                 // Request sampling from the client
                 return exchange.createMessage(messageRequest)
+                        .doOnSubscribe( subscription -> {
+                            mcpNotifyLog( exchange, request, McpSchema.LoggingLevel.NOTICE, logger, "start " );
+                        })
+                        .doOnSuccess( signal -> {
+                            mcpNotifyLog( exchange, request, McpSchema.LoggingLevel.NOTICE, logger, "end" );
+                            mcpNotifyProgress(exchange, request, state.progress()+1, logger);
+                        })
                         .map(result -> (McpSchema.TextContent) result.content())
-                        .map( content -> PlantumlTools.sanitizeDiagramOutput( content.text() ) )
-                        .map( content -> Map.<String,Object>of( "plantuml_script", content) )
+                        .map( content -> {
+                            mcpNotifyLog( exchange, request, McpSchema.LoggingLevel.INFO, logger.concat("content"), content.text()  );
+                            var text=  PlantumlTools.sanitizeDiagramOutput( content.text() );
+                            mcpNotifyLog( exchange, request, McpSchema.LoggingLevel.INFO, logger.concat("content"), text  );
+                            return text;
+                        })
+                        .map( content -> Map.<String,Object>of( "plantuml_script", content,
+                                                                        "process_progress", state.progress()+1) )
                         .toFuture();
             };
         }
@@ -124,6 +152,9 @@ interface PlantumlMainWorkflow {
         private AsyncNodeActionWithConfig<State> sequenceDiagramToPlantUML(McpAsyncServerExchange exchange,
                                                                            McpSchema.CallToolRequest request )
         {
+
+            final var logger = "sequenceDiagramToPlantUML";
+
             return ( state, config ) -> {
 
                 var diagramSource = state.diagramDescription();
@@ -150,6 +181,13 @@ interface PlantumlMainWorkflow {
 
                 // Request sampling from the client
                 return exchange.createMessage(messageRequest)
+                        .doOnSubscribe( subscription -> {
+                            mcpNotifyLog( exchange, request, McpSchema.LoggingLevel.NOTICE, logger, "start " );
+                        })
+                        .doOnSuccess( signal -> {
+                            mcpNotifyLog( exchange, request, McpSchema.LoggingLevel.NOTICE, logger, "end" );
+                            mcpNotifyProgress(exchange, request, state.progress()+1, logger);
+                        })
                         .map(result -> (McpSchema.TextContent) result.content())
                         .map( content -> sanitizeDiagramOutput( content.text() ) )
                         .map( content -> Map.<String,Object>of( "plantuml_script", content) )
@@ -184,14 +222,15 @@ interface PlantumlMainWorkflow {
 
             var serializer = new StateSerializer();
 
+            /*
             var reviewWorkflow = PlantumlReviewWorkflow.builder()
                                     .stateSerializer( serializer )
                                     .build( exchange, request )
                                     .compile(CompileConfig.builder()
                                             .recursionLimit(10)
                                             .build());
-
-            AsyncNodeActionWithConfig<State> noDiagramReview = ( state, config ) ->
+            */
+            AsyncNodeActionWithConfig<State> reviewWorkflow = ( state, config ) ->
                                                                     completedFuture( Map.of() );
 
             return new StateGraph<>( serializer )

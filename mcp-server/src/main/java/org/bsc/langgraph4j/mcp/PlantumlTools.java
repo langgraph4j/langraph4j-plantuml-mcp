@@ -21,6 +21,7 @@ import java.util.regex.Pattern;
 
 import static java.util.concurrent.CompletableFuture.completedFuture;
 import static java.util.concurrent.CompletableFuture.failedFuture;
+import static org.bsc.langgraph4j.mcp.MCPNotificationsSupport.mcpNotifyProgress;
 
 interface PlantumlTools {
 
@@ -36,22 +37,33 @@ interface PlantumlTools {
     }
 
     static String sanitizeDiagramOutput(String output ) {
-        final var pattern = "^.*(@startuml(.*?)@enduml).*$";
+        // Here is a breakdown of the regex:
+        // (?s): This is a flag that enables DOTALL mode, which allows the . character to match newline characters.
+        //       This is important for multi-line code blocks.
+        // \```: Matches the opening three backticks of the code block.
+        // \w*: Matches the optional language specifier (e.g., java, python).
+        //   \w matches any word character (alphanumeric & underscore), and * matches it zero or more times.
+        // \n: Matches the newline character after the language specifier.
+        // (.*?): This is the capturing group for the code itself.
+        //   .: Matches any character (including newlines because of (?s)).
+        //   *: Matches the previous token zero or more times.
+        //   ?: Makes the * non-greedy, so it stops matching at the first occurrence of the subsequent token (`\n```
+        // \n: Matches the newline character before the closing backticks.
+        // \```: Matches the closing three backticks.
+        final var pattern = "^(?s)```\\w+\\n(.*?)\\n```$";
 
         // Create a Pattern object
         final var jsonPattern = Pattern.compile(pattern, Pattern.DOTALL | Pattern.MULTILINE);
 
         // Create a Matcher object
-        java.util.regex.Matcher matcher = jsonPattern.matcher(output);
+        var matcher = jsonPattern.matcher(output);
 
         // Check if a match is found
-        if (!matcher.find()) {
-            return "@startuml\n%s\n@enduml".formatted(matcher.group(2));
-            //throw new IllegalArgumentException("no diagram provided!\n%s".formatted( output ));
+        if (matcher.find()) {
+            return matcher.group(1);
         }
 
-        return matcher.group(1);
-
+        return output;
     }
 
     static Mono<McpSchema.CallToolResult> toImage(McpAsyncServerExchange exchange, McpSchema.CallToolRequest request) {
@@ -156,7 +168,9 @@ interface PlantumlTools {
                             .addTextContent("error running agentic workflow"))
                     .build());
 
-            return Mono.fromFuture( futureResult );
+            return Mono.fromFuture( futureResult )
+                        .doOnSubscribe( subscription ->
+                                mcpNotifyProgress(exchange,request, 0.0, "start process") );
 
         } catch (GraphStateException e) {
             return Mono.just(McpSchema.CallToolResult.builder()
