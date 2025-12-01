@@ -21,6 +21,8 @@ import static java.util.Objects.requireNonNull;
 import static java.util.concurrent.CompletableFuture.completedFuture;
 import static java.util.concurrent.CompletableFuture.failedFuture;
 import static org.bsc.langgraph4j.GraphDefinition.START;
+import static org.bsc.langgraph4j.mcp.MCPNotificationsSupport.mcpNotifyLog;
+import static org.bsc.langgraph4j.mcp.MCPNotificationsSupport.mcpNotifyProgress;
 
 interface PlantumlReviewWorkflow {
 
@@ -42,6 +44,8 @@ interface PlantumlReviewWorkflow {
     class Builder {
 
         public static <T> CompletableFuture<T> validatePlantUMLScript(String script) {
+            System.out.println(script);
+
             SourceStringReader reader = new SourceStringReader(script);
 
             final List<BlockUml> blocks = reader.getBlocks();
@@ -88,6 +92,7 @@ interface PlantumlReviewWorkflow {
         private AsyncNodeActionWithConfig<PlantumlMainWorkflow.State> reviewResult(McpAsyncServerExchange exchange,
                                                                                    McpSchema.CallToolRequest request )
         {
+            final var logger = "reviewResult";
             return ( state, config ) -> {
 
                 if( state.plantUMLScript().isEmpty() ) {
@@ -119,6 +124,14 @@ interface PlantumlReviewWorkflow {
 
                 // Request sampling from the client
                 return exchange.createMessage(messageRequest)
+                        .doOnSubscribe( subscription -> {
+                            mcpNotifyLog(exchange, request, McpSchema.LoggingLevel.NOTICE, logger, "start ");
+                        })
+                        .doOnSuccess( signal -> {
+                            mcpNotifyProgress(exchange, request, state.progress()+1,  logger);
+                            mcpNotifyLog( exchange, request, McpSchema.LoggingLevel.NOTICE, logger, "end" );
+                        })
+
                         .map(result -> (McpSchema.TextContent) result.content())
                         .map( content -> PlantumlTools.sanitizeDiagramOutput( content.text() ) )
                         .map( content -> Map.<String,Object>of( "plantuml_script", content) )

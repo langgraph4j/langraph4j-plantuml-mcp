@@ -5,6 +5,7 @@ import io.modelcontextprotocol.json.McpJsonMapper;
 import io.modelcontextprotocol.json.jackson.JacksonMcpJsonMapper;
 import io.modelcontextprotocol.server.McpAsyncServerExchange;
 import io.modelcontextprotocol.spec.McpSchema;
+import org.bsc.langgraph4j.CompileConfig;
 import org.bsc.langgraph4j.GraphStateException;
 import org.bsc.langgraph4j.StateGraph;
 import org.bsc.langgraph4j.action.AsyncEdgeAction;
@@ -138,9 +139,9 @@ interface PlantumlMainWorkflow {
                         })
                         .map(result -> (McpSchema.TextContent) result.content())
                         .map( content -> {
-                            mcpNotifyLog( exchange, request, McpSchema.LoggingLevel.INFO, logger.concat("content"), content.text()  );
+                            mcpNotifyLog( exchange, request, McpSchema.LoggingLevel.DEBUG, logger.concat("content"), content.text()  );
                             var text=  PlantumlTools.sanitizeDiagramOutput( content.text() );
-                            mcpNotifyLog( exchange, request, McpSchema.LoggingLevel.INFO, logger.concat("content"), text  );
+                            mcpNotifyLog( exchange, request, McpSchema.LoggingLevel.DEBUG, logger.concat("content"), text  );
                             return text;
                         })
                         .map( content -> Map.<String,Object>of( "plantuml_script", content,
@@ -222,17 +223,18 @@ interface PlantumlMainWorkflow {
 
             var serializer = new StateSerializer();
 
-            /*
+
             var reviewWorkflow = PlantumlReviewWorkflow.builder()
                                     .stateSerializer( serializer )
                                     .build( exchange, request )
                                     .compile(CompileConfig.builder()
                                             .recursionLimit(10)
                                             .build());
-            */
+
+            /*
             AsyncNodeActionWithConfig<State> reviewWorkflow = ( state, config ) ->
                                                                     completedFuture( Map.of() );
-
+            */
             return new StateGraph<>( serializer )
                             .addNode("describe_image", describeDiagramImage( exchange, request )  )
                             .addNode("sequence_to_plantuml", sequenceDiagramToPlantUML( exchange, request ) )
