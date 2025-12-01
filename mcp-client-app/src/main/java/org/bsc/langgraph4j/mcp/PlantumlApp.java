@@ -48,9 +48,8 @@ import java.util.stream.Collectors;
 import static java.util.Objects.requireNonNull;
 
 
-
 public class PlantumlApp {
-    public static void main( String[] args ) {
+    public static void main(String[] args) {
 
         var app = new PlantumlApp();
 
@@ -60,7 +59,7 @@ public class PlantumlApp {
 
     enum AIModel {
 
-        OPENAI( name ->
+        OPENAI(name ->
                 OpenAiChatModel.builder()
                         .openAiApi(OpenAiApi.builder()
                                 //.baseUrl("https://api.openai.com")
@@ -72,7 +71,7 @@ public class PlantumlApp {
                                 .temperature(0.1)
                                 .build())
                         .build()),
-        OLLAMA( name ->
+        OLLAMA(name ->
                 OllamaChatModel.builder()
                         .retryTemplate(RetryTemplate.builder()
                                 .maxAttempts(10)
@@ -88,30 +87,30 @@ public class PlantumlApp {
 
         private final Function<String, ChatModel> model;
 
-        public ChatModel model( String name ) {
-            return model.apply( name );
+        public ChatModel model(String name) {
+            return model.apply(name);
         }
 
-        AIModel(Function<String,ChatModel> model) {
+        AIModel(Function<String, ChatModel> model) {
             this.model = model;
         }
     }
 
     InMemoryTransport transport() {
         return (InMemoryTransport) Jt.cache()
-                .computeIfAbsent( "mcp_transport", key -> new InMemoryTransport());
+                .computeIfAbsent("mcp_transport", key -> new InMemoryTransport());
     }
 
     McpAsyncServer mcpServer() {
-       return (McpAsyncServer) Jt.cache().computeIfAbsent( "mcp_server", key -> {
-           System.out.println( "CREATE MCP SERVER");
-           var serverProvider = new InMemoryServerTransportProvider(transport());
+        return (McpAsyncServer) Jt.cache().computeIfAbsent("mcp_server", key -> {
+            System.out.println("CREATE MCP SERVER");
+            var serverProvider = new InMemoryServerTransportProvider(transport());
 
             return PlantumlMCPServer.async(serverProvider);
         });
     }
 
-    static  DateTimeFormatter dateFormatter = DateTimeFormatter.ofPattern("HH:mm:ss.SSS");
+    static DateTimeFormatter dateFormatter = DateTimeFormatter.ofPattern("HH:mm:ss.SSS");
 
     String now() {
         return LocalTime.now().format(dateFormatter);
@@ -120,40 +119,26 @@ public class PlantumlApp {
     @SuppressWarnings("unchecked")
     AsyncGenerator.WithResult<Notification> processProgress() {
 
-        var generator = new AsyncGeneratorQueue.Generator<Notification>( new ArrayBlockingQueue<>(10));
+        var generator = new AsyncGeneratorQueue.Generator<Notification>(new ArrayBlockingQueue<>(10));
         return (AsyncGenerator.WithResult<Notification>) Jt.sessionState().computeIfAbsent("process_progress", b ->
-                new AsyncGenerator.WithResult<>(generator) );
+                new AsyncGenerator.WithResult<>(generator));
     }
 
     BlockingQueue<AsyncGenerator.Data<Notification>> processProgressQueue() {
         return ((AsyncGeneratorQueue.Generator<Notification>) processProgress().delegate()).queue();
     }
 
-    record TaskState(String key ) {
-
-        public void start() {
-            Jt.sessionState().computeIfAbsentBoolean(key, b -> true);
-        }
-        public boolean started() {
-            return Jt.sessionState().getBoolean( key, false);
-        }
-        public void stop() {
-            Jt.sessionState().computeIfAbsentBoolean( key, b -> false);
-        }
-
-    }
 
     // the Javelit webapp
-    void  view() {
+    void view() {
 
-        var workflowTaskState = new TaskState("workflow");
         var mcpServer = mcpServer();
 
-        Jt.title( "PlantUML App").use();
+        Jt.title("PlantUML App").use();
 
-        var uploadedImage = Jt.fileUploader( "Diagram Image")
-                .acceptMultipleFiles( FileUploaderComponent.MultipleFiles.FALSE )
-                .type( List.of("image/png", "image/jpeg"))
+        var uploadedImage = Jt.fileUploader("Diagram Image")
+                .acceptMultipleFiles(FileUploaderComponent.MultipleFiles.FALSE)
+                .type(List.of("image/png", "image/jpeg"))
                 .use();
 
         Jt.divider("hr1").use();
@@ -164,67 +149,59 @@ public class PlantumlApp {
 
         if (!uploadedImage.isEmpty()) {
             JtUploadedFile image = uploadedImage.getFirst();
-            Jt.image( image.content() ).use(imageSource);
+            Jt.image(image.content()).use(imageSource);
 
-            var buttonState = Jt.button( "Process Image")
-                    .disabled( workflowTaskState.started() )
-                    .use();
-            if( buttonState ) {
+            var buttonState = Jt.button("Process Image").use();
+            if (buttonState) {
                 var processProgressInfo = Jt.empty().key("processProgressInfo").use();
 
-                if( !workflowTaskState.started() ) {
+                Disposable disposable = null;
+                try {
 
-                    workflowTaskState.start();
-                    try {
+                    disposable = describeDiagramFromImageTest(image, processProgressQueue());
 
-                        var disposable = describeDiagramFromImageTest(image, processProgressQueue());
+                    for (var notification : processProgress()) {
+                        if (notification instanceof Notification.Logging(McpSchema.LoggingMessageNotification value)) {
 
-                        for (var notification : processProgress()) {
-                            if(notification instanceof Notification.Progress(McpSchema.ProgressNotification value)) {
-                                System.out.printf("%s - *********** NOTIFICATION %s-%f%n", now(), value.message(), value.progress());
-                                try {
-                                    Jt.info("PROGRESS: %s(%f)".formatted(value.message(), value.progress()))
-                                            .use(processProgressInfo);
-                                    Thread.sleep(100);
-                                } catch (Exception ex) {
-                                    System.out.printf("ERROR DISPLAYING NOTIFICATION [%s]%n%s%n",
-                                            value.message(),
-                                            ex.getMessage());
-                                }
-                            }
+                            final var log = "1. [%s] - %s::%s ".formatted(now(), value.logger(), value.data());
+                            var processLog = Jt.sessionState().computeString("process_log", (k, v) ->
+                                    v == null ? log : v.concat("\n").concat(log));
+                            Jt.info(processLog)
+                                    .use(processProgressInfo);
 
                         }
+                    }
 
-                        var result = processProgress().resultValue().orElse("@startuml\n@enduml\n");
+                    var result = processProgress().resultValue().orElse("@startuml\n@enduml\n");
 
-                        Jt.text(String.valueOf(result)).use(plantumlResult);
-                    } catch (Exception ex) {
-                        Jt.error(ex.getMessage()).use(processProgressInfo);
-                    } finally {
-                        workflowTaskState.stop();
+                    Jt.text(String.valueOf(result)).use(plantumlResult);
+                } catch (Exception ex) {
+                    Jt.error(ex.getMessage()).use(processProgressInfo);
+                } finally {
+                    if( disposable != null ) {
+                        disposable.dispose();
                     }
                 }
-
-
             }
+
         }
 
     }
 
-    private Mono<Void> sendProgressCompleteNotification(BlockingQueue<AsyncGenerator.Data<Notification>> notificationQueue, Object result ) {
+    private Mono<Void> sendProgressCompleteNotification(BlockingQueue<AsyncGenerator.Data<Notification>> notificationQueue, Object result) {
 
-        return Mono.fromRunnable( () ->  {
-            System.out.printf( "%s - SEND PROGRESS COMPLETE NOTIFICATION Thread [%s]%n",
+        return Mono.fromRunnable(() -> {
+            System.out.printf("%s - SEND PROGRESS COMPLETE NOTIFICATION Thread [%s]%n",
                     now(),
                     Thread.currentThread().getName());
             notificationQueue.offer(AsyncGenerator.Data.done(result));
         });
     }
 
-    private Mono<Void> sendProgressErrorNotification(BlockingQueue<AsyncGenerator.Data<Notification>> notificationQueue, Throwable ex ) {
+    private Mono<Void> sendProgressErrorNotification(BlockingQueue<AsyncGenerator.Data<Notification>> notificationQueue, Throwable ex) {
 
-        return Mono.fromRunnable( () -> {
-            System.out.printf( "%s - SEND PROGRESS ERROR NOTIFICATION Thread [%s]%n",
+        return Mono.fromRunnable(() -> {
+            System.out.printf("%s - SEND PROGRESS ERROR NOTIFICATION Thread [%s]%n",
                     now(),
                     Thread.currentThread().getName());
             notificationQueue.offer(AsyncGenerator.Data.error(ex));
@@ -233,58 +210,67 @@ public class PlantumlApp {
 
     }
 
-    private Function<McpSchema.ProgressNotification,Mono<Void>> sendProgressNotification( BlockingQueue<AsyncGenerator.Data<Notification>> notificationQueue ) {
+    private Function<McpSchema.ProgressNotification, Mono<Void>> sendProgressNotification(BlockingQueue<AsyncGenerator.Data<Notification>> notificationQueue) {
 
         return (progress) ->
-            Mono.fromRunnable( () -> {
+                Mono.fromRunnable(() -> {
+/*
                 System.out.printf("%s - SEND PROGRESS '%s' NOTIFICATION thread [%s]%n",
                         now(),
                         "%s-%f".formatted(progress.message(), progress.progress()),
                         Thread.currentThread().getName());
-                notificationQueue.offer(AsyncGenerator.Data.of(Notification.progress(progress)));
-                notificationQueue.offer(AsyncGenerator.Data.of(Notification.ACK));
-            });
+*/
+                    notificationQueue.offer(AsyncGenerator.Data.of(Notification.progress(progress)));
+                    notificationQueue.offer(AsyncGenerator.Data.of(Notification.ACK));
+                });
     }
 
-    private Function<McpSchema.LoggingMessageNotification,Mono<Void>> sendLogNotification( BlockingQueue<AsyncGenerator.Data<Notification>> notificationQueue ) {
+    private Function<McpSchema.LoggingMessageNotification, Mono<Void>> sendLogNotification(BlockingQueue<AsyncGenerator.Data<Notification>> notificationQueue) {
 
-        return (loggingMessage) -> {
-            //System.out.printf( "SEND LOG NOTIFICATION [%s]%n", Thread.currentThread().getName());
-            //return Mono.fromRunnable(() -> System.out.printf( "LOGGER: %s%n", loggingMessage));
-            return Mono.empty();
-        };
+        return (loggingMessage) ->
+                Mono.fromRunnable(() -> {
+/*
+                System.out.printf("%s - LOG NOTIFICATION [%s:%s] thread [%s]%n",
+                        now(),
+                        loggingMessage.logger(),
+                        loggingMessage.data(),
+                        Thread.currentThread().getName());
+*/
+                    notificationQueue.offer(AsyncGenerator.Data.of(Notification.logging(loggingMessage)));
+                    notificationQueue.offer(AsyncGenerator.Data.of(Notification.ACK));
+                });
     }
+
 
     Disposable describeDiagramFromImageTest(JtUploadedFile uploadedImage,
-                                            BlockingQueue<AsyncGenerator.Data<Notification>> notificationQueue )
-    {
+                                            BlockingQueue<AsyncGenerator.Data<Notification>> notificationQueue) {
 
         var clientTransport = new InMemoryClientTransport(transport());
 
-        final var imageResource = new ByteArrayResource( uploadedImage.content() );
+        final var imageResource = new ByteArrayResource(uploadedImage.content());
 
-        final var mimeType = MimeType.valueOf( uploadedImage.contentType() );
+        final var mimeType = MimeType.valueOf(uploadedImage.contentType());
 
         final var chatVisionModel = AIModel.OLLAMA.model("qwen3-vl:latest");
-        final var chatMiniModel = AIModel.OLLAMA.model("qwen2.5:7b");
+        final var chatMiniModel = AIModel.OLLAMA.model("qwen3:8b");
         //final var chatVisionModel = AIModel.OPENAI_VISION.model("gpt-4o");
 
 
         var client = McpClient.async(clientTransport)
                 .requestTimeout(Duration.ofMinutes(10))
-                .progressConsumer( sendProgressNotification(notificationQueue) )
-                //.loggingConsumer( sendLogNotification(notificationQueue) )
-                .capabilities( McpSchema.ClientCapabilities.builder()
+                //.progressConsumer( sendProgressNotification(notificationQueue) )
+                .loggingConsumer(sendLogNotification(notificationQueue))
+                .capabilities(McpSchema.ClientCapabilities.builder()
                         .sampling()
                         .build())
-                .sampling( request -> {
+                .sampling(request -> {
 
-                    final var instruction =  (McpSchema.TextContent)request.messages().getFirst().content();
+                    final var instruction = (McpSchema.TextContent) request.messages().getFirst().content();
 
                     var response = request.modelPreferences().hints().stream()
-                            .filter( h -> "vision".equalsIgnoreCase(h.name()))
+                            .filter(h -> "vision".equalsIgnoreCase(h.name()))
                             .findFirst()
-                            .map( h -> {
+                            .map(h -> {
                                 /*
                                 var userMessage = UserMessage.builder()
                                         .text(instruction.text())
@@ -299,7 +285,7 @@ public class PlantumlApp {
 
                                  */
                                 return ChatResponse.builder()
-                                        .generations( List.of( new Generation(AssistantMessage.builder()
+                                        .generations(List.of(new Generation(AssistantMessage.builder()
                                                 .content("""
                                                         {
                                                           "type": "process",
@@ -369,9 +355,9 @@ public class PlantumlApp {
                                                           ]
                                                         }
                                                         
-                                                        """).build())) )
+                                                        """).build())))
                                         .build();
-                            }).orElseGet( () -> {
+                            }).orElseGet(() -> {
                                 var userMessage = UserMessage.builder()
                                         .text(instruction.text())
                                         .build();
@@ -384,8 +370,8 @@ public class PlantumlApp {
                             });
 
 
-                    return Mono.just( McpSchema.CreateMessageResult.builder()
-                            .message( requireNonNull(response)
+                    return Mono.just(McpSchema.CreateMessageResult.builder()
+                            .message(requireNonNull(response)
                                     .getResult()
                                     .getOutput()
                                     .getText())
@@ -397,27 +383,27 @@ public class PlantumlApp {
 
         return client.initialize()
                 //.flatMap( init -> client.setLoggingLevel( McpSchema.LoggingLevel.DEBUG ))
-                .flatMap( init -> {
+                .flatMap(init -> {
                     var callToolRequest = McpSchema.CallToolRequest.builder()
                             .name("describe_diagram_from_image")
                             .progressToken("describe_diagram_from_image")
                             .build();
 
-                    System.out.printf( "CALL TOOL [%s]%n", Thread.currentThread().getName());
+                    System.out.printf("CALL TOOL [%s]%n", Thread.currentThread().getName());
                     return client.callTool(callToolRequest);
 
                 })
-                .map( result -> result.content().stream()
-                        .filter( content -> content instanceof McpSchema.TextContent )
-                        .map( content -> ((McpSchema.TextContent) content) )
+                .map(result -> result.content().stream()
+                        .filter(content -> content instanceof McpSchema.TextContent)
+                        .map(content -> ((McpSchema.TextContent) content))
                         .map(McpSchema.TextContent::text)
                         .collect(Collectors.joining("\n")))
                 //.subscribeOn( Schedulers.newSingle("call-tool-thread"))
-                .doFinally( signal -> client.closeGracefully().subscribe() )
-                .subscribe( value -> {
-                    sendProgressCompleteNotification( notificationQueue, value ).block();
+                .doFinally(signal -> client.closeGracefully().subscribe())
+                .subscribe(value -> {
+                    sendProgressCompleteNotification(notificationQueue, value).block();
                 }, ex -> {
-                    sendProgressErrorNotification( notificationQueue, ex ).block();
+                    sendProgressErrorNotification(notificationQueue, ex).block();
                 });
 
     }
