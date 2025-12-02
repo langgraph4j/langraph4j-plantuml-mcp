@@ -9,6 +9,7 @@ package org.bsc.langgraph4j.mcp;
 
 import io.javelit.components.media.FileUploaderComponent;
 import io.javelit.core.Jt;
+import io.javelit.core.JtComponent;
 import io.javelit.core.JtUploadedFile;
 import io.modelcontextprotocol.client.McpClient;
 import io.modelcontextprotocol.server.McpAsyncServer;
@@ -63,7 +64,7 @@ public class PlantumlApp {
                 OpenAiChatModel.builder()
                         .openAiApi(OpenAiApi.builder()
                                 //.baseUrl("https://api.openai.com")
-                                .apiKey(System.getenv("OPENAI_API_KEY"))
+                                .apiKey(System.getProperty("OPENAI_API_KEY"))
                                 .build())
                         .defaultOptions(OpenAiChatOptions.builder()
                                 .model(name)
@@ -136,6 +137,36 @@ public class PlantumlApp {
 
         Jt.title("PlantUML App").use();
 
+        var selectModelCols = Jt.columns(2).key("select-model-cols").use();
+
+        boolean cloud = Jt.toggle("Select Cloud/Local Model").use(selectModelCols.col(0));
+        Jt.text(cloud ? "cloud" : "local").use(selectModelCols.col(1));
+
+        String model = null;
+        if( cloud ) {
+            var cloudModelCols = Jt.columns(2).key("cloud-model-cols").use();
+            model = Jt.radio("Available models",
+                    List.of("gpt-4o-mini")).use(cloudModelCols.col(0));
+            var apikey = Jt.textInput("API KEY:")
+                        .type("password")
+                        .labelVisibility(JtComponent.LabelVisibility.HIDDEN)
+                        .placeholder("api key")
+                        .width(600)
+                        .use( cloudModelCols.col(1));
+            if( apikey == null ) {
+                Jt.error("API KEY cannot be null").use();
+            }
+            else {
+                System.setProperty("OPENAI_API_KEY", apikey);
+            }
+        }
+        else {
+            model = Jt.radio("Available models",
+                    List.of("qwen2.5:7b", "qwen3:8b", "gpt-oss:20b")).use();
+        }
+
+        Jt.divider("hr3").use();
+
         var uploadedImage = Jt.fileUploader("Diagram Image")
                 .acceptMultipleFiles(FileUploaderComponent.MultipleFiles.FALSE)
                 .type(List.of("image/png", "image/jpeg"))
@@ -145,36 +176,46 @@ public class PlantumlApp {
         var imageSource = Jt.empty().key("imageSource").use();
 
         Jt.divider("hr2").use();
+
         var plantumlResult = Jt.empty().key("plantumlResult").use();
 
         if (!uploadedImage.isEmpty()) {
+
             JtUploadedFile image = uploadedImage.getFirst();
             Jt.image(image.content()).use(imageSource);
 
-            var buttonState = Jt.button("Process Image").use();
+            var buttonState = Jt.button("Process Image")
+                                .disabled( model == null )
+                                .use();
             if (buttonState) {
-                var processProgressInfo = Jt.empty().key("processProgressInfo").use();
+                var processProgressInfo = Jt.container().key("processProgressInfo").use();
 
                 Disposable disposable = null;
                 try {
 
-                    disposable = describeDiagramFromImageTest(image, processProgressQueue());
+                    ChatModel chatModel;
+                    if( "gpt-4o-mini".equals(model)) {
+                        chatModel = AIModel.OPENAI.model(model);
+                    }
+                    else {
+                        chatModel = AIModel.OLLAMA.model(model);
+                    }
+                    disposable = describeDiagramFromImageTest(chatModel, image, processProgressQueue());
 
                     for (var notification : processProgress()) {
                         if (notification instanceof Notification.Logging(McpSchema.LoggingMessageNotification value)) {
 
-                            final var log = "1. [%s] - %s::%s ".formatted(now(), value.logger(), value.data());
-                            var processLog = Jt.sessionState().computeString("process_log", (k, v) ->
-                                    v == null ? log : v.concat("\n").concat(log));
-                            Jt.info(processLog)
-                                    .use(processProgressInfo);
+                            final var log = "[%s] - %s::%s ".formatted(now(), value.logger(), value.data());
+                            Jt.text(log).use(processProgressInfo);
 
                         }
                     }
 
                     var result = processProgress().resultValue().orElse("@startuml\n@enduml\n");
 
-                    Jt.text(String.valueOf(result)).use(plantumlResult);
+                    var imageUrl = PlantumlTools.toImageUrl( String.valueOf(result) ).block();
+                    Jt.image(imageUrl).use(plantumlResult);
+
                 } catch (Exception ex) {
                     Jt.error(ex.getMessage()).use(processProgressInfo);
                 } finally {
@@ -188,7 +229,7 @@ public class PlantumlApp {
 
     }
 
-    private Mono<Void> sendProgressCompleteNotification(BlockingQueue<AsyncGenerator.Data<Notification>> notificationQueue, Object result) {
+    private Mono<Void> sendProgressCompleteNotification( BlockingQueue<AsyncGenerator.Data<Notification>> notificationQueue, Object result) {
 
         return Mono.fromRunnable(() -> {
             System.out.printf("%s - SEND PROGRESS COMPLETE NOTIFICATION Thread [%s]%n",
@@ -242,19 +283,17 @@ public class PlantumlApp {
     }
 
 
-    Disposable describeDiagramFromImageTest(JtUploadedFile uploadedImage,
-                                            BlockingQueue<AsyncGenerator.Data<Notification>> notificationQueue) {
+    Disposable describeDiagramFromImageTest( ChatModel chatModel,
+            JtUploadedFile uploadedImage,
+            BlockingQueue<AsyncGenerator.Data<Notification>> notificationQueue)
+    {
 
         var clientTransport = new InMemoryClientTransport(transport());
 
         final var imageResource = new ByteArrayResource(uploadedImage.content());
-
         final var mimeType = MimeType.valueOf(uploadedImage.contentType());
 
         final var chatVisionModel = AIModel.OLLAMA.model("qwen3-vl:latest");
-        final var chatMiniModel = AIModel.OLLAMA.model("qwen3:8b");
-        //final var chatVisionModel = AIModel.OPENAI_VISION.model("gpt-4o");
-
 
         var client = McpClient.async(clientTransport)
                 .requestTimeout(Duration.ofMinutes(10))
@@ -361,7 +400,7 @@ public class PlantumlApp {
                                 var userMessage = UserMessage.builder()
                                         .text(instruction.text())
                                         .build();
-                                return ChatClient.builder(chatMiniModel)
+                                return ChatClient.builder(chatModel)
                                         .build()
                                         .prompt()
                                         .messages(userMessage)
