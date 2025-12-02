@@ -25,6 +25,7 @@ import static org.bsc.langgraph4j.mcp.MCPNotificationsSupport.mcpNotifyLog;
 import static org.bsc.langgraph4j.mcp.MCPNotificationsSupport.mcpNotifyProgress;
 
 interface PlantumlReviewWorkflow {
+    org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(PlantumlReviewWorkflow.class);
 
     class EvaluationResultException extends Exception  {
         public final ErrorUml errorUml;
@@ -44,12 +45,12 @@ interface PlantumlReviewWorkflow {
     class Builder {
 
         public static <T> CompletableFuture<T> validatePlantUMLScript(String script) {
-            System.out.println(script);
 
             SourceStringReader reader = new SourceStringReader(script);
 
             final List<BlockUml> blocks = reader.getBlocks();
             if (blocks.size() != 1) {
+                log.atError().log(script);
                 return failedFuture( new IllegalArgumentException( "Invalid PlantUML script (block.size = %d)".formatted( blocks.size())) );
             }
 
@@ -73,6 +74,16 @@ interface PlantumlReviewWorkflow {
                 if( state.plantUMLScript().isEmpty() ) {
                     return failedFuture( new IllegalStateException("plantuml_script attribute is missing"));
 
+                }
+                var isLastScriptEqualsToCurrent = state.<String>value( "plantuml_last_script")
+                        .flatMap(lastScript -> state.plantUMLScript().map( script -> script.equals(lastScript) ))
+                        .orElse( false );
+
+                if( isLastScriptEqualsToCurrent ) {
+                    return completedFuture( Map.of(
+                            "evaluation_result", EvaluationResult.ERROR,
+                            "evaluation_error", "The last correction has has as result the same script. Process interrupted"
+                    ));
                 }
 
                 return validatePlantUMLScript( state.plantUMLScript().get() )
@@ -105,6 +116,8 @@ interface PlantumlReviewWorkflow {
 
                 }
 
+                var last_script = state.plantUMLScript().get();
+
                 var samplingMessage = new McpSchema.SamplingMessage(
                         McpSchema.Role.ASSISTANT,
                         new McpSchema.TextContent(PlantumlPrompts.REVIEW_DIAGRAM.apply(state.plantUMLScript().get(), evaluationError.get())));
@@ -131,10 +144,12 @@ interface PlantumlReviewWorkflow {
                             mcpNotifyProgress(exchange, request, state.progress()+1,  logger);
                             mcpNotifyLog( exchange, request, McpSchema.LoggingLevel.NOTICE, logger, "end" );
                         })
-
                         .map(result -> (McpSchema.TextContent) result.content())
                         .map( content -> PlantumlTools.sanitizeDiagramOutput( content.text() ) )
-                        .map( content -> Map.<String,Object>of( "plantuml_script", content) )
+                        .map( content -> Map.<String,Object>of(
+                                    "plantuml_last_script", last_script,
+                                    "plantuml_script", content
+                                    ) )
                         .toFuture();
             };
         }
