@@ -15,7 +15,8 @@ public interface PlantumlMCPServer {
                         .logging()
                         .build())
                 .tools(
-                        PlantumlTools.toImageSpecification(),
+                        PlantumlTools.toImageFileSpecification(),
+                        PlantumlTools.toImageUrlSpecification(),
                         PlantumlTools.describeDiagramFromImageSpecification()
                 )
                 .prompts(
