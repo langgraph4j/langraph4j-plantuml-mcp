@@ -5,14 +5,18 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import io.modelcontextprotocol.server.McpAsyncServerExchange;
 import io.modelcontextprotocol.server.McpServerFeatures;
 import io.modelcontextprotocol.spec.McpSchema;
+import net.sourceforge.plantuml.FileFormat;
+import net.sourceforge.plantuml.FileFormatOption;
 import net.sourceforge.plantuml.SourceStringReader;
 import org.bsc.langgraph4j.*;
 import reactor.core.publisher.Mono;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -23,7 +27,7 @@ import static java.util.concurrent.CompletableFuture.completedFuture;
 import static java.util.concurrent.CompletableFuture.failedFuture;
 import static org.bsc.langgraph4j.mcp.MCPNotificationsSupport.mcpNotifyProgress;
 
-interface PlantumlTools {
+public interface PlantumlTools {
 
     record OutputImage(
             Path path,
@@ -56,17 +60,78 @@ interface PlantumlTools {
         final var jsonPattern = Pattern.compile(pattern, Pattern.DOTALL | Pattern.MULTILINE);
 
         // Create a Matcher object
-        var matcher = jsonPattern.matcher(output);
+        final var matcher = jsonPattern.matcher(output);
 
         // Check if a match is found
-        if (matcher.find()) {
-            return matcher.group(1);
-        }
+        var candidateResult = (matcher.find()) ? matcher.group(1) : output ;
 
-        return output;
+        final var pattern1 = "^@startuml\\n.*?\\n@enduml$";
+
+        final var jsonPattern1 = Pattern.compile(pattern1, Pattern.DOTALL | Pattern.MULTILINE);
+
+        final var matcher1 = jsonPattern1.matcher(candidateResult);
+
+        return (matcher1.find()) ? candidateResult : "@startuml\n%s\n@enduml".formatted(candidateResult) ;
     }
 
-    static Mono<McpSchema.CallToolResult> toImage(McpAsyncServerExchange exchange, McpSchema.CallToolRequest request) {
+    static Mono<String> toImageUrl( String script ) {
+        Supplier<CompletableFuture<String>> _toImage = () -> {
+
+            if( script == null ) {
+                return failedFuture( new IllegalArgumentException("script argument cannot be null"));
+            }
+
+            var reader = new SourceStringReader(script);
+
+            // Output the image to a file and capture its description.
+            try (ByteArrayOutputStream out = new ByteArrayOutputStream(1024 * 1024 )) {
+                reader.outputImage(out, new FileFormatOption(FileFormat.PNG, true ) );
+                var base64Image = Base64.getEncoder().encodeToString(out.toByteArray());
+                var url =  "data:%s;base64,%s".formatted( FileFormat.PNG.getMimeType(),  base64Image );
+
+                return completedFuture(url);
+            } catch (IOException e) {
+                return failedFuture(e);
+            }
+        };
+
+        return Mono.fromFuture( _toImage.get() );
+
+    }
+
+    static Mono<McpSchema.CallToolResult> toImageUrl(McpAsyncServerExchange exchange, McpSchema.CallToolRequest request) {
+
+        return toImageUrl( (String)request.arguments().get("script") )
+                .map(result ->
+                        McpSchema.CallToolResult.builder()
+                                .structuredContent(result)
+                                .build())
+                .onErrorResume(ex ->
+                        Mono.just(McpSchema.CallToolResult.builder()
+                                .isError(true)
+                                .addTextContent(ex.getMessage())
+                                .build()));
+    }
+
+    static McpServerFeatures.AsyncToolSpecification toImageUrlSpecification() {
+
+        final var schema = McpSchema.Tool.builder()
+                .description("generate png data image url from the plantuml script")
+                .name("plantuml_to_image_url")
+                .inputSchema(
+                        new McpSchema.JsonSchema("object",
+                                Map.of("script", Map.of( "type", "string",
+                                                            "description", "plantuml script")),
+                                List.of("script"), false, null, null))
+                .build();
+
+        return McpServerFeatures.AsyncToolSpecification.builder()
+                .tool(schema)
+                .callHandler(PlantumlTools::toImageFile)
+                .build();
+    }
+
+    static Mono<McpSchema.CallToolResult> toImageFile(McpAsyncServerExchange exchange, McpSchema.CallToolRequest request) {
         Supplier<CompletableFuture<OutputImage>> _toImage = () -> {
 
             var scriptArg = request.arguments().get("script");
@@ -117,11 +182,11 @@ interface PlantumlTools {
 
     }
 
-    static McpServerFeatures.AsyncToolSpecification toImageSpecification() {
+    static McpServerFeatures.AsyncToolSpecification toImageFileSpecification() {
 
         final var schema = McpSchema.Tool.builder()
                 .description("generate png file image from the plantuml script")
-                .name("plantuml_to_image")
+                .name("plantuml_to_image_file")
                 .inputSchema(
                         new McpSchema.JsonSchema("object",
                                 Map.of("script", "string",
@@ -132,10 +197,9 @@ interface PlantumlTools {
 
         return McpServerFeatures.AsyncToolSpecification.builder()
                 .tool(schema)
-                .callHandler(PlantumlTools::toImage)
+                .callHandler(PlantumlTools::toImageFile)
                 .build();
     }
-
 
     static Mono<McpSchema.CallToolResult> describeDiagramFromImage(McpAsyncServerExchange exchange, McpSchema.CallToolRequest request) {
 
